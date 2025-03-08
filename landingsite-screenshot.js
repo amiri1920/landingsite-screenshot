@@ -20,9 +20,10 @@ async function captureScreenshot(id, outputPath, options = {}) {
     
     // Default options
     const opts = {
-        timeout: options.timeout || 180000, // 3 minutes default timeout
+        timeout: options.timeout || 90000, // 90 seconds default timeout (reduced)
         headless: options.headless !== undefined ? options.headless : 'new',
-        waitTime: options.waitTime || 25000, // 25 seconds default wait time
+        waitTime: options.waitTime || 20000, // 20 seconds default wait time
+        maxRetries: options.maxRetries || 2, // Number of navigation retries
     };
     
     let browser;
@@ -36,9 +37,8 @@ async function captureScreenshot(id, outputPath, options = {}) {
                 '--disable-dev-shm-usage',
                 '--disable-accelerated-2d-canvas',
                 '--disable-gpu',
-                '--window-size=1920,5000', // Increased from 3000 to 5000
+                '--window-size=1920,5000',
                 '--hide-scrollbars',
-                // Memory optimization flags (but not as aggressive)
                 '--disable-extensions',
                 '--disable-component-extensions-with-background-pages',
                 '--disable-default-apps',
@@ -46,7 +46,7 @@ async function captureScreenshot(id, outputPath, options = {}) {
             ],
             defaultViewport: {
                 width: 1920,
-                height: 5000, // Increased from 3000 to 5000
+                height: 5000,
                 deviceScaleFactor: 1,
             },
             ignoreHTTPSErrors: true,
@@ -91,90 +91,100 @@ async function captureScreenshot(id, outputPath, options = {}) {
         // Set user agent to a desktop browser
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
         
-        // Navigate to the URL
-        console.log(`Navigating to: ${url}`);
-        await page.goto(url, { 
-            waitUntil: 'networkidle2',
-            timeout: opts.timeout 
+        // Set request timeout
+        page.setDefaultNavigationTimeout(opts.timeout);
+        
+        // Add error handler for page errors
+        page.on('error', err => {
+            console.error('Page error:', err);
         });
         
-        // Initial wait for the page to start rendering
-        console.log(`Initial wait: ${opts.waitTime/2}ms for page to start rendering...`);
-        await new Promise(resolve => setTimeout(resolve, opts.waitTime/2));
+        // Add console handler to capture page console messages
+        page.on('console', msg => {
+            console.log('Page console:', msg.text());
+        });
         
-        // First scroll pass to trigger lazy loading
-        console.log('First scroll pass to trigger lazy loading...');
-        await balancedScroll(page);
+        // Navigate to the URL with retry mechanism
+        let navigationSuccess = false;
+        let navigationError = null;
         
-        // Second wait to ensure all content loads
-        console.log(`Second wait: ${opts.waitTime/2}ms for content to finish loading...`);
-        await new Promise(resolve => setTimeout(resolve, opts.waitTime/2));
+        for (let attempt = 0; attempt <= opts.maxRetries; attempt++) {
+            try {
+                if (attempt > 0) {
+                    console.log(`Navigation retry attempt ${attempt}/${opts.maxRetries}...`);
+                }
+                
+                // Use a simpler waitUntil strategy
+                console.log(`Navigating to: ${url} (timeout: ${opts.timeout}ms)`);
+                await page.goto(url, { 
+                    waitUntil: 'domcontentloaded', // Changed from networkidle2 to domcontentloaded
+                    timeout: opts.timeout 
+                });
+                
+                // If we get here, navigation succeeded
+                navigationSuccess = true;
+                console.log('Navigation completed successfully');
+                break;
+            } catch (err) {
+                navigationError = err;
+                console.warn(`Navigation attempt ${attempt + 1} failed: ${err.message}`);
+                
+                // If this was the last attempt, we'll throw later
+                if (attempt < opts.maxRetries) {
+                    // Wait a bit before retrying
+                    await new Promise(resolve => setTimeout(resolve, 5000));
+                }
+            }
+        }
         
-        // Get page height using a balanced approach
+        // If all navigation attempts failed, try a fallback approach
+        if (!navigationSuccess) {
+            console.log('All navigation attempts failed, trying fallback approach...');
+            
+            try {
+                // Try with a minimal waitUntil option
+                await page.goto(url, { 
+                    waitUntil: 'load',
+                    timeout: opts.timeout 
+                });
+                
+                // If we get here, fallback navigation succeeded
+                navigationSuccess = true;
+                console.log('Fallback navigation completed');
+            } catch (err) {
+                // If fallback also fails, we'll use the original error
+                console.error('Fallback navigation also failed:', err.message);
+                throw navigationError || err;
+            }
+        }
+        
+        // Wait for the page to render
+        console.log(`Waiting ${opts.waitTime}ms for page to render...`);
+        await new Promise(resolve => setTimeout(resolve, opts.waitTime));
+        
+        // Scroll to ensure all content is loaded
+        console.log('Scrolling to ensure all content is loaded...');
+        await safeScroll(page);
+        
+        // Get page height using a safe approach
         const dimensions = await page.evaluate(() => {
-            // Force all images and other resources to load
+            // Scroll to bottom to ensure all content is loaded
             window.scrollTo(0, document.body.scrollHeight);
             
-            // Method 1: Basic document properties
-            const documentHeight = Math.max(
+            // Get document height with padding
+            const height = Math.max(
                 document.body.scrollHeight,
-                document.body.offsetHeight,
-                document.documentElement.clientHeight,
-                document.documentElement.scrollHeight,
-                document.documentElement.offsetHeight
-            );
-            
-            // Method 2: Check for specific containers that might contain the main content
-            // This is more memory-efficient than checking all elements
-            const containers = [
-                document.body,
-                document.documentElement,
-                document.querySelector('main'),
-                document.querySelector('.main'),
-                document.querySelector('#main'),
-                document.querySelector('.content'),
-                document.querySelector('#content'),
-                document.querySelector('.container'),
-                document.querySelector('#container'),
-                document.querySelector('footer'),
-                document.querySelector('.footer'),
-                document.querySelector('#footer')
-            ].filter(el => el !== null);
-            
-            let containerMaxHeight = 0;
-            for (const container of containers) {
-                const rect = container.getBoundingClientRect();
-                const height = rect.bottom + window.scrollY;
-                if (height > containerMaxHeight) {
-                    containerMaxHeight = height;
-                }
-            }
-            
-            // Method 3: Check a sample of elements (not all elements to save memory)
-            // Get all elements with specific tags that are likely to be at the bottom
-            const bottomElements = [
-                ...document.querySelectorAll('footer, .footer, #footer, .bottom, #bottom'),
-                ...document.querySelectorAll('section:last-child, div:last-child')
-            ];
-            
-            let elementsMaxHeight = 0;
-            for (const el of bottomElements) {
-                const rect = el.getBoundingClientRect();
-                const bottom = rect.bottom + window.scrollY;
-                if (bottom > elementsMaxHeight) {
-                    elementsMaxHeight = bottom;
-                }
-            }
-            
-            // Take the maximum of all methods and add padding
-            const finalHeight = Math.max(documentHeight, containerMaxHeight, elementsMaxHeight) + 200;
-            
-            console.log(`Height detection: Document=${documentHeight}, Containers=${containerMaxHeight}, Elements=${elementsMaxHeight}, Final=${finalHeight}`);
+                document.documentElement.scrollHeight
+            ) + 200;
             
             return {
                 width: 1920,
-                height: finalHeight
+                height: height
             };
+        }).catch(err => {
+            console.warn('Error getting page dimensions:', err.message);
+            // Return a default size if evaluation fails
+            return { width: 1920, height: 8500 }; // Use a large default height
         });
         
         console.log(`Detected page dimensions: ${dimensions.width}x${dimensions.height}`);
@@ -183,6 +193,9 @@ async function captureScreenshot(id, outputPath, options = {}) {
         await page.setViewport({
             width: dimensions.width,
             height: dimensions.height
+        }).catch(err => {
+            console.warn('Error setting viewport:', err.message);
+            // Continue anyway
         });
         
         // Take the screenshot
@@ -202,63 +215,62 @@ async function captureScreenshot(id, outputPath, options = {}) {
     } finally {
         // Close the browser
         if (browser) {
-            await browser.close();
+            await browser.close().catch(err => {
+                console.warn('Error closing browser:', err.message);
+            });
         }
     }
 }
 
-// Balanced scrolling function - more thorough than efficient but less memory-intensive than the original
-async function balancedScroll(page) {
-    await page.evaluate(async () => {
-        await new Promise((resolve) => {
-            // Get initial height
-            const initialHeight = Math.max(
-                document.body.scrollHeight,
-                document.documentElement.scrollHeight
-            );
-            
-            // Scroll in moderate chunks
-            const distance = 300;
-            let totalHeight = 0;
-            let lastScrollTop = 0;
-            let stuckCount = 0;
-            
-            const timer = setInterval(() => {
-                window.scrollBy(0, distance);
-                totalHeight += distance;
-                
-                const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-                
-                // If we're stuck at the same position
-                if (scrollTop === lastScrollTop) {
-                    stuckCount++;
-                    // If we're stuck for 3 iterations, try scrolling to the bottom directly
-                    if (stuckCount >= 3) {
-                        window.scrollTo(0, 999999);
-                        // Wait a bit and then try continuing
-                        setTimeout(() => {
-                            stuckCount = 0;
-                        }, 500);
-                    }
-                } else {
-                    stuckCount = 0;
-                }
-                
-                // If we've scrolled well past the initial height or we're stuck for too long
-                if (totalHeight >= initialHeight + 2000 || stuckCount >= 5) {
-                    clearInterval(timer);
+// Safe scrolling function with error handling
+async function safeScroll(page) {
+    try {
+        await page.evaluate(async () => {
+            await new Promise((resolve) => {
+                try {
+                    // Get initial height
+                    const initialHeight = Math.max(
+                        document.body.scrollHeight,
+                        document.documentElement.scrollHeight
+                    );
                     
-                    // Scroll back to top
-                    window.scrollTo(0, 0);
+                    // Scroll in larger chunks to reduce operations
+                    const distance = 500;
+                    let totalHeight = 0;
                     
-                    // Wait a bit and then resolve
-                    setTimeout(resolve, 500);
+                    const timer = setInterval(() => {
+                        try {
+                            window.scrollBy(0, distance);
+                            totalHeight += distance;
+                            
+                            // If we've scrolled past the initial height
+                            if (totalHeight >= initialHeight + 1000) {
+                                clearInterval(timer);
+                                window.scrollTo(0, 0); // Scroll back to top
+                                resolve();
+                            }
+                        } catch (err) {
+                            console.error('Scroll error:', err);
+                            clearInterval(timer);
+                            resolve();
+                        }
+                    }, 200);
+                    
+                    // Safety timeout to ensure we don't get stuck
+                    setTimeout(() => {
+                        clearInterval(timer);
+                        resolve();
+                    }, 30000);
+                } catch (err) {
+                    console.error('Scroll setup error:', err);
+                    resolve();
                 }
-                
-                lastScrollTop = scrollTop;
-            }, 150); // Moderate interval
+            });
         });
-    });
+    } catch (err) {
+        console.warn('Error during scrolling:', err.message);
+        // Continue anyway
+    }
 }
 
 module.exports = { captureScreenshot };
