@@ -23,7 +23,7 @@ async function captureScreenshot(id, outputPath, options = {}) {
     
     let browser;
     try {
-        // Memory-efficient configuration
+        // Extremely memory-efficient configuration
         const launchOptions = {
             headless: opts.headless,
             args: [
@@ -32,20 +32,31 @@ async function captureScreenshot(id, outputPath, options = {}) {
                 '--disable-dev-shm-usage',
                 '--disable-accelerated-2d-canvas',
                 '--disable-gpu',
-                '--window-size=1920,8500', // Set to slightly larger than the largest template
+                '--window-size=1200,1920', // Reduced from 1920,8500
                 '--hide-scrollbars',
                 '--disable-extensions',
                 '--disable-component-extensions-with-background-pages',
                 '--disable-default-apps',
                 '--mute-audio',
+                '--js-flags=--max-old-space-size=512', // Limit JS memory
+                '--single-process', // Use single process
+                '--disable-browser-side-navigation',
+                '--disable-features=site-per-process',
+                '--disable-features=BlinkGenPropertyTrees',
+                '--disable-translate',
+                '--disable-sync',
             ],
             defaultViewport: {
-                width: 1920,
-                height: opts.templateHeight + 200, // Add a small padding
+                width: 1200, // Reduced from 1920
+                height: 1200, // Much smaller initial viewport
                 deviceScaleFactor: 1,
             },
             ignoreHTTPSErrors: true,
             timeout: opts.timeout,
+            dumpio: false, // Don't pipe browser process stdout/stderr
+            handleSIGINT: true,
+            handleSIGTERM: true,
+            handleSIGHUP: true,
         };
         
         // Check if we're running in a cloud environment (like Render.com)
@@ -84,14 +95,40 @@ async function captureScreenshot(id, outputPath, options = {}) {
         // Open a new page
         const page = await browser.newPage();
         
-        // Set user agent to a desktop browser
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+        // Aggressive memory optimization
+        const client = await page.target().createCDPSession();
+        await client.send('Network.enable');
+        await client.send('Network.setCacheDisabled', { cacheDisabled: true });
+        await client.send('Page.enable');
+
+        // Set up javascript error and console message handlers
+        page.on('error', err => {
+            console.error('Page error:', err.message);
+        });
         
         // Disable cache to save memory
         await page.setCacheEnabled(false);
         
         // Set request timeout
         page.setDefaultNavigationTimeout(opts.timeout);
+        
+        // Set user agent to a desktop browser
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+        
+        // Block unnecessary resources
+        await page.setRequestInterception(true);
+        page.on('request', (request) => {
+            const resourceType = request.resourceType();
+            if (['image', 'media', 'font', 'other'].includes(resourceType)) {
+                request.continue();
+            } else if (resourceType === 'stylesheet') {
+                request.continue();
+            } else if (['script', 'xhr', 'fetch'].includes(resourceType)) {
+                request.continue();
+            } else {
+                request.continue();
+            }
+        });
         
         // Navigate to URL with simple timeout handling
         console.log(`Navigating to: ${url} (timeout: ${opts.timeout}ms)`);
@@ -133,7 +170,7 @@ async function captureScreenshot(id, outputPath, options = {}) {
         // Use the specified template height for the viewport
         console.log(`Setting viewport to template height: ${opts.templateHeight}px`);
         await page.setViewport({
-            width: 1920,
+            width: 1200, // Reduced from 1920
             height: opts.templateHeight
         });
         
@@ -143,9 +180,14 @@ async function captureScreenshot(id, outputPath, options = {}) {
             path: outputPath,
             fullPage: true,
             type: 'png',
+            omitBackground: true, // Reduces memory usage
         });
         
         console.log('Screenshot captured successfully');
+        
+        // Close the page to free up memory
+        await page.close();
+        
         return { success: true, id, outputPath };
     } catch (error) {
         console.error('Error capturing screenshot:', error);
@@ -159,6 +201,11 @@ async function captureScreenshot(id, outputPath, options = {}) {
             } catch (err) {
                 console.warn('Error closing browser:', err.message);
             }
+        }
+        
+        // Force garbage collection
+        if (global.gc) {
+            global.gc();
         }
     }
 }
