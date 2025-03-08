@@ -1,0 +1,28 @@
+{
+  "name": "landingsite-screenshot",
+  "version": "1.0.0",
+  "description": "Automated screenshot tool for landingsite.ai website previews",
+  "main": "api-server.js",
+  "bin": {
+    "landingsite-screenshot": "./cli.js"
+  },
+  "scripts": {
+    "start": "node api-server.js",
+    "api": "node api-server.js",
+    "cli": "node cli.js",
+    "capture": "node cli.js capture",
+    "batch": "node cli.js batch",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["screenshot", "puppeteer", "web", "automation", "landingsite"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@types/node": "^18.0.6",
+    "express": "^4.21.2",
+    "puppeteer-core": "^24.3.1",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "sharp": "^0.33.5"
+  }
+}
