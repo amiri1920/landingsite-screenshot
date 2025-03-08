@@ -84,15 +84,9 @@ async function captureScreenshot(id, outputPath, options = {}) {
         // Navigate to the URL
         await page.goto(url, { waitUntil: 'networkidle2', timeout: opts.timeout });
         
-        // Wait for the preview to load
+        // Wait for the preview to load using a universal approach with setTimeout
         console.log(`Waiting ${opts.waitTime}ms for preview to fully render...`);
-        // Fix for compatibility with different Puppeteer versions
-        if (typeof page.waitForTimeout === 'function') {
-            await page.waitForTimeout(opts.waitTime);
-        } else {
-            // Fallback for older Puppeteer versions
-            await page.waitFor(opts.waitTime);
-        }
+        await new Promise(resolve => setTimeout(resolve, opts.waitTime));
         
         // Get the height of the page content
         const bodyHeight = await page.evaluate(() => {
