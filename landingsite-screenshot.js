@@ -20,10 +20,12 @@ async function captureScreenshot(id, outputPath, options = {}) {
     
     // Default options
     const opts = {
-        timeout: options.timeout || 90000, // 90 seconds default timeout (reduced)
+        timeout: options.timeout || 90000, // 90 seconds default timeout
         headless: options.headless !== undefined ? options.headless : 'new',
         waitTime: options.waitTime || 20000, // 20 seconds default wait time
         maxRetries: options.maxRetries || 2, // Number of navigation retries
+        // Use the template height if known, otherwise use larger template size
+        templateHeight: options.templateHeight || 8295, // Default to larger template
     };
     
     let browser;
@@ -37,7 +39,7 @@ async function captureScreenshot(id, outputPath, options = {}) {
                 '--disable-dev-shm-usage',
                 '--disable-accelerated-2d-canvas',
                 '--disable-gpu',
-                '--window-size=1920,5000',
+                '--window-size=1920,9000', // Increased to handle the largest template with extra margin
                 '--hide-scrollbars',
                 '--disable-extensions',
                 '--disable-component-extensions-with-background-pages',
@@ -46,7 +48,7 @@ async function captureScreenshot(id, outputPath, options = {}) {
             ],
             defaultViewport: {
                 width: 1920,
-                height: 5000,
+                height: 9000, // Set larger than needed to ensure full page is captured
                 deviceScaleFactor: 1,
             },
             ignoreHTTPSErrors: true,
@@ -97,11 +99,6 @@ async function captureScreenshot(id, outputPath, options = {}) {
         // Add error handler for page errors
         page.on('error', err => {
             console.error('Page error:', err);
-        });
-        
-        // Add console handler to capture page console messages
-        page.on('console', msg => {
-            console.log('Page console:', msg.text());
         });
         
         // Navigate to the URL with retry mechanism
@@ -166,28 +163,48 @@ async function captureScreenshot(id, outputPath, options = {}) {
         console.log('Scrolling to ensure all content is loaded...');
         await safeScroll(page);
         
-        // Get page height using a safe approach
-        const dimensions = await page.evaluate(() => {
-            // Scroll to bottom to ensure all content is loaded
-            window.scrollTo(0, document.body.scrollHeight);
+        // Try to detect which template is being used (optional)
+        let templateHeight = opts.templateHeight;
+        try {
+            const detectedTemplate = await page.evaluate(() => {
+                // Basic check for elements that might indicate template type
+                const footerType1 = document.querySelector('.footer-type-1');
+                const footerType2 = document.querySelector('.footer-type-2');
+                
+                // Very simple logic to guess the template
+                if (footerType1) return 'template1';
+                if (footerType2) return 'template2';
+                
+                // Check page structure for other clues
+                const sections = document.querySelectorAll('section');
+                if (sections.length > 10) return 'template1'; // More sections usually means taller template
+                
+                // Default to unknown
+                return 'unknown';
+            }).catch(() => 'unknown');
             
-            // Get document height with padding
-            const height = Math.max(
-                document.body.scrollHeight,
-                document.documentElement.scrollHeight
-            ) + 200;
-            
-            return {
-                width: 1920,
-                height: height
-            };
-        }).catch(err => {
-            console.warn('Error getting page dimensions:', err.message);
-            // Return a default size if evaluation fails
-            return { width: 1920, height: 8500 }; // Use a large default height
-        });
+            // Set height based on detected template (this is optional)
+            if (detectedTemplate === 'template1') {
+                templateHeight = 8295;
+                console.log('Detected template 1 (height: 8295px)');
+            } else if (detectedTemplate === 'template2') {
+                templateHeight = 6565;
+                console.log('Detected template 2 (height: 6565px)');
+            } else {
+                console.log('Unable to detect template, using default height of 8295px');
+            }
+        } catch (err) {
+            console.warn('Error detecting template:', err.message);
+            // Continue with default height
+        }
         
-        console.log(`Detected page dimensions: ${dimensions.width}x${dimensions.height}`);
+        // Set final dimensions using our known template heights
+        const dimensions = {
+            width: 1920,
+            height: templateHeight
+        };
+        
+        console.log(`Using fixed dimensions: ${dimensions.width}x${dimensions.height}`);
         
         // Resize viewport to match content height
         await page.setViewport({
@@ -234,31 +251,28 @@ async function safeScroll(page) {
                         document.documentElement.scrollHeight
                     );
                     
-                    // Scroll in larger chunks to reduce operations
-                    const distance = 500;
-                    let totalHeight = 0;
+                    // Scroll down in chunks to ensure all content loads
+                    const scrollStep = 500;
+                    const scrollDelay = 200;
+                    let currentPosition = 0;
                     
-                    const timer = setInterval(() => {
-                        try {
-                            window.scrollBy(0, distance);
-                            totalHeight += distance;
-                            
-                            // If we've scrolled past the initial height
-                            if (totalHeight >= initialHeight + 1000) {
-                                clearInterval(timer);
-                                window.scrollTo(0, 0); // Scroll back to top
-                                resolve();
-                            }
-                        } catch (err) {
-                            console.error('Scroll error:', err);
-                            clearInterval(timer);
+                    function scrollDown() {
+                        window.scrollTo(0, currentPosition);
+                        currentPosition += scrollStep;
+                        
+                        if (currentPosition <= initialHeight + 2000) {
+                            setTimeout(scrollDown, scrollDelay);
+                        } else {
+                            window.scrollTo(0, 0);
                             resolve();
                         }
-                    }, 200);
+                    }
+                    
+                    scrollDown();
                     
                     // Safety timeout to ensure we don't get stuck
                     setTimeout(() => {
-                        clearInterval(timer);
+                        window.scrollTo(0, 0);
                         resolve();
                     }, 30000);
                 } catch (err) {
