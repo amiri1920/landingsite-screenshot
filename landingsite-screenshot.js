@@ -22,7 +22,7 @@ async function captureScreenshot(id, outputPath, options = {}) {
     const opts = {
         timeout: options.timeout || 300000, // 5 minutes default timeout
         headless: options.headless !== undefined ? options.headless : 'new',
-        waitTime: options.waitTime || 45000, // 45 seconds default wait time (increased)
+        waitTime: options.waitTime || 45000, // 45 seconds default wait time
     };
     
     let browser;
@@ -36,15 +36,15 @@ async function captureScreenshot(id, outputPath, options = {}) {
                 '--disable-dev-shm-usage',
                 '--disable-accelerated-2d-canvas',
                 '--disable-gpu',
-                '--window-size=1920,10000', // Start with an extremely tall window
+                '--window-size=1920,8000', // Reduced from 10000 to 8000
                 '--hide-scrollbars',
                 '--disable-web-security',
-                '--disable-features=site-per-process', // Helps with iframe content
+                '--disable-features=site-per-process',
                 '--enable-features=NetworkService',
             ],
             defaultViewport: {
                 width: 1920,
-                height: 10000, // Start with an extremely tall viewport
+                height: 8000, // Reduced from 10000 to 8000
                 deviceScaleFactor: 1,
             },
             ignoreHTTPSErrors: true,
@@ -124,21 +124,38 @@ async function captureScreenshot(id, outputPath, options = {}) {
         console.log(`Final wait: ${opts.waitTime/3}ms to ensure complete rendering...`);
         await new Promise(resolve => setTimeout(resolve, opts.waitTime/3));
         
-        // Using multiple techniques to detect page height
+        // Using multiple techniques to detect page height with precision
         const dimensions = await page.evaluate(() => {
             // Force all images and other resources to load
-            window.scrollTo(0, 999999); // Scroll to a very large value
+            window.scrollTo(0, 999999);
             
-            // Method 1: Get all elements on the page
+            // Method 1: Get all elements on the page and find the lowest visible element
             const allElements = document.querySelectorAll('*');
             let maxHeight = 0;
+            let lowestVisibleElement = null;
             
-            // Find the element with the greatest bottom position
             for (const el of allElements) {
+                // Skip elements with zero height or invisible elements
+                if (el.offsetHeight === 0 || 
+                    window.getComputedStyle(el).display === 'none' || 
+                    window.getComputedStyle(el).visibility === 'hidden') {
+                    continue;
+                }
+                
                 const rect = el.getBoundingClientRect();
                 const bottom = rect.bottom + window.scrollY;
-                if (bottom > maxHeight) {
+                
+                // Only consider elements that have actual content or background
+                const hasBackground = window.getComputedStyle(el).backgroundColor !== 'rgba(0, 0, 0, 0)' && 
+                                     window.getComputedStyle(el).backgroundColor !== 'transparent';
+                const hasContent = el.textContent.trim().length > 0;
+                const hasBorder = window.getComputedStyle(el).borderBottomWidth !== '0px';
+                const hasImage = el.tagName === 'IMG' || 
+                                window.getComputedStyle(el).backgroundImage !== 'none';
+                
+                if ((hasBackground || hasContent || hasBorder || hasImage) && bottom > maxHeight) {
                     maxHeight = bottom;
+                    lowestVisibleElement = el;
                 }
             }
             
@@ -152,14 +169,23 @@ async function captureScreenshot(id, outputPath, options = {}) {
                 document.querySelector('.content'),
                 document.querySelector('#content'),
                 document.querySelector('.container'),
-                document.querySelector('#container')
+                document.querySelector('#container'),
+                document.querySelector('footer'),
+                document.querySelector('.footer'),
+                document.querySelector('#footer')
             ].filter(el => el !== null);
             
             let containerMaxHeight = 0;
+            let tallestContainer = null;
+            
             for (const container of containers) {
-                const height = container.scrollHeight;
+                // Get the actual rendered height, not just scrollHeight
+                const rect = container.getBoundingClientRect();
+                const height = rect.bottom + window.scrollY;
+                
                 if (height > containerMaxHeight) {
                     containerMaxHeight = height;
+                    tallestContainer = container;
                 }
             }
             
@@ -172,10 +198,33 @@ async function captureScreenshot(id, outputPath, options = {}) {
                 document.documentElement.offsetHeight
             );
             
-            // Take the maximum of all methods and add generous padding
-            const finalHeight = Math.max(maxHeight, containerMaxHeight, documentHeight) + 500;
+            // Find the most precise height by comparing methods
+            // If element detection found a good candidate, prioritize it
+            let finalHeight;
+            let method = '';
             
-            console.log(`Height detection: Elements=${maxHeight}, Containers=${containerMaxHeight}, Document=${documentHeight}, Final=${finalHeight}`);
+            if (lowestVisibleElement && maxHeight > 0 && maxHeight + 200 >= documentHeight) {
+                // If the lowest element is close to document height, use it with small padding
+                finalHeight = maxHeight + 100;
+                method = 'Element';
+            } else if (tallestContainer && containerMaxHeight > 0 && containerMaxHeight + 200 >= documentHeight) {
+                // If container height is close to document height, use it with small padding
+                finalHeight = containerMaxHeight + 100;
+                method = 'Container';
+            } else {
+                // Fall back to document height with moderate padding
+                finalHeight = documentHeight + 150;
+                method = 'Document';
+            }
+            
+            // Log detailed information for debugging
+            console.log(`Height detection details:
+                Element method: ${maxHeight}px (${lowestVisibleElement ? lowestVisibleElement.tagName : 'none'})
+                Container method: ${containerMaxHeight}px (${tallestContainer ? tallestContainer.tagName : 'none'})
+                Document method: ${documentHeight}px
+                Selected method: ${method}
+                Final height: ${finalHeight}px
+            `);
             
             return {
                 width: 1920,
@@ -218,7 +267,7 @@ async function autoScroll(page) {
     await page.evaluate(async () => {
         await new Promise((resolve) => {
             let totalHeight = 0;
-            const distance = 200; // Increased scroll distance
+            const distance = 200;
             const timer = setInterval(() => {
                 const scrollHeight = Math.max(
                     document.body.scrollHeight,
@@ -230,11 +279,11 @@ async function autoScroll(page) {
                 
                 // Add some randomness to the scrolling to trigger different lazy loading thresholds
                 if (totalHeight % 1000 < 10) {
-                    window.scrollBy(0, -100); // Occasionally scroll back up a bit
-                    setTimeout(() => window.scrollBy(0, 100), 100); // Then back down
+                    window.scrollBy(0, -100);
+                    setTimeout(() => window.scrollBy(0, 100), 100);
                 }
                 
-                if (totalHeight >= scrollHeight + 2000) { // Add extra scrolling beyond detected height
+                if (totalHeight >= scrollHeight + 1000) {
                     clearInterval(timer);
                     window.scrollTo(0, 0); // Scroll back to top
                     resolve();
