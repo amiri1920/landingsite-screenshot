@@ -32,7 +32,7 @@ async function captureScreenshot(id, outputPath, options = {}) {
                 '--disable-dev-shm-usage',
                 '--disable-accelerated-2d-canvas',
                 '--disable-gpu',
-                '--window-size=1200,1920', // Reduced from 1920,8500
+                '--window-size=1920,1920', // Restored to 1920 width
                 '--hide-scrollbars',
                 '--disable-extensions',
                 '--disable-component-extensions-with-background-pages',
@@ -47,8 +47,8 @@ async function captureScreenshot(id, outputPath, options = {}) {
                 '--disable-sync',
             ],
             defaultViewport: {
-                width: 1200, // Reduced from 1920
-                height: 1200, // Much smaller initial viewport
+                width: 1920, // Restored to 1920 width
+                height: 1200, // Keep smaller initial viewport height
                 deviceScaleFactor: 1,
             },
             ignoreHTTPSErrors: true,
@@ -170,7 +170,7 @@ async function captureScreenshot(id, outputPath, options = {}) {
         // Use the specified template height for the viewport
         console.log(`Setting viewport to template height: ${opts.templateHeight}px`);
         await page.setViewport({
-            width: 1200, // Reduced from 1920
+            width: 1920, // Restored to 1920 width
             height: opts.templateHeight
         });
         
