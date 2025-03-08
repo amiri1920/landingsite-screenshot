@@ -18,12 +18,12 @@ async function captureScreenshot(id, outputPath, options = {}) {
         timeout: options.timeout || 60000, // 60 seconds default timeout
         headless: options.headless !== undefined ? options.headless : 'new',
         waitTime: options.waitTime || 15000, // 15 seconds default wait time
-        templateHeight: options.templateHeight || 8295, // Default to larger template
+        templateHeight: options.templateHeight || 9125, // 10% more than 8295 to ensure we capture everything
     };
     
     let browser;
     try {
-        // Extremely memory-efficient configuration
+        // Memory-efficient configuration
         const launchOptions = {
             headless: opts.headless,
             args: [
@@ -32,7 +32,7 @@ async function captureScreenshot(id, outputPath, options = {}) {
                 '--disable-dev-shm-usage',
                 '--disable-accelerated-2d-canvas',
                 '--disable-gpu',
-                '--window-size=1920,1920', // Restored to 1920 width
+                '--window-size=1920,1920',
                 '--hide-scrollbars',
                 '--disable-extensions',
                 '--disable-component-extensions-with-background-pages',
@@ -47,7 +47,7 @@ async function captureScreenshot(id, outputPath, options = {}) {
                 '--disable-sync',
             ],
             defaultViewport: {
-                width: 1920, // Restored to 1920 width
+                width: 1920,
                 height: 1200, // Keep smaller initial viewport height
                 deviceScaleFactor: 1,
             },
@@ -112,8 +112,8 @@ async function captureScreenshot(id, outputPath, options = {}) {
         // Set request timeout
         page.setDefaultNavigationTimeout(opts.timeout);
         
-        // Set user agent to a desktop browser
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+        // Set user agent to a desktop browser (macOS Chrome)
+        await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
         
         // Block unnecessary resources
         await page.setRequestInterception(true);
@@ -143,22 +143,68 @@ async function captureScreenshot(id, outputPath, options = {}) {
             // Continue even if navigation has issues
         }
         
+        // Override viewport meta tag to force desktop rendering
+        console.log('Setting explicit viewport meta tag...');
+        await page.evaluate(() => {
+            // Remove any existing viewport meta tags
+            const existingViewports = document.querySelectorAll('meta[name="viewport"]');
+            existingViewports.forEach(tag => tag.remove());
+            
+            // Add our own viewport meta tag
+            const meta = document.createElement('meta');
+            meta.name = 'viewport';
+            meta.content = 'width=1920, initial-scale=1.0';
+            document.head.appendChild(meta);
+        });
+        
+        // Inject CSS to force desktop layout
+        console.log('Injecting CSS to force desktop layout...');
+        await page.addStyleTag({
+            content: `
+                /* Force desktop layout */
+                @media (max-width: 1920px) {
+                    body { min-width: 1920px !important; }
+                }
+                /* Disable responsive behaviors */
+                .container, .container-fluid { 
+                    width: 1920px !important; 
+                    max-width: none !important; 
+                }
+                /* Ensure proper scaling */
+                html, body {
+                    zoom: 1 !important;
+                    -webkit-text-size-adjust: 100% !important;
+                }
+            `
+        });
+        
         // Simple wait for content to load
         console.log(`Waiting ${opts.waitTime}ms for page to render...`);
         await new Promise(resolve => setTimeout(resolve, opts.waitTime));
         
-        // Simple scroll to ensure all content is loaded
+        // Improved scrolling to ensure all content is loaded
         console.log('Scrolling to ensure all content is loaded...');
         await page.evaluate(async () => {
-            const totalHeight = document.body.scrollHeight;
+            const totalHeight = Math.max(
+                document.body.scrollHeight,
+                document.documentElement.scrollHeight,
+                document.body.offsetHeight,
+                document.documentElement.offsetHeight
+            );
+            
+            // Scroll in smaller increments
             const viewportHeight = window.innerHeight;
             let scrollTop = 0;
             
             while (scrollTop < totalHeight) {
                 window.scrollTo(0, scrollTop);
                 await new Promise(resolve => setTimeout(resolve, 100));
-                scrollTop += viewportHeight / 2; // Scroll by half the viewport height
+                scrollTop += Math.floor(viewportHeight / 3); // Smaller increments for more thorough loading
             }
+            
+            // Ensure we reach the very bottom
+            window.scrollTo(0, totalHeight);
+            await new Promise(resolve => setTimeout(resolve, 500));
             
             // Scroll back to top
             window.scrollTo(0, 0);
@@ -170,7 +216,7 @@ async function captureScreenshot(id, outputPath, options = {}) {
         // Use the specified template height for the viewport
         console.log(`Setting viewport to template height: ${opts.templateHeight}px`);
         await page.setViewport({
-            width: 1920, // Restored to 1920 width
+            width: 1920,
             height: opts.templateHeight
         });
         
