@@ -20,14 +20,14 @@ async function captureScreenshot(id, outputPath, options = {}) {
     
     // Default options
     const opts = {
-        timeout: options.timeout || 180000, // 3 minutes default timeout (reduced)
+        timeout: options.timeout || 180000, // 3 minutes default timeout
         headless: options.headless !== undefined ? options.headless : 'new',
-        waitTime: options.waitTime || 20000, // 20 seconds default wait time (reduced)
+        waitTime: options.waitTime || 25000, // 25 seconds default wait time
     };
     
     let browser;
     try {
-        // Memory-optimized configuration
+        // Balanced configuration for memory and full page capture
         const launchOptions = {
             headless: opts.headless,
             args: [
@@ -36,19 +36,17 @@ async function captureScreenshot(id, outputPath, options = {}) {
                 '--disable-dev-shm-usage',
                 '--disable-accelerated-2d-canvas',
                 '--disable-gpu',
-                '--window-size=1920,3000', // Reduced from 8000 to 3000
+                '--window-size=1920,5000', // Increased from 3000 to 5000
                 '--hide-scrollbars',
-                // Memory optimization flags
-                '--single-process',
+                // Memory optimization flags (but not as aggressive)
                 '--disable-extensions',
                 '--disable-component-extensions-with-background-pages',
                 '--disable-default-apps',
                 '--mute-audio',
-                '--js-flags=--max-old-space-size=512', // Limit JS memory
             ],
             defaultViewport: {
                 width: 1920,
-                height: 3000, // Reduced from 8000 to 3000
+                height: 5000, // Increased from 3000 to 5000
                 deviceScaleFactor: 1,
             },
             ignoreHTTPSErrors: true,
@@ -93,9 +91,6 @@ async function captureScreenshot(id, outputPath, options = {}) {
         // Set user agent to a desktop browser
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
         
-        // Memory optimization: Disable cache
-        await page.setCacheEnabled(false);
-        
         // Navigate to the URL
         console.log(`Navigating to: ${url}`);
         await page.goto(url, { 
@@ -103,28 +98,82 @@ async function captureScreenshot(id, outputPath, options = {}) {
             timeout: opts.timeout 
         });
         
-        // Wait for the preview to load
-        console.log(`Waiting ${opts.waitTime}ms for page to render...`);
-        await new Promise(resolve => setTimeout(resolve, opts.waitTime));
+        // Initial wait for the page to start rendering
+        console.log(`Initial wait: ${opts.waitTime/2}ms for page to start rendering...`);
+        await new Promise(resolve => setTimeout(resolve, opts.waitTime/2));
         
-        // Memory-efficient scrolling
-        console.log('Scrolling to ensure all content is loaded...');
-        await efficientScroll(page);
+        // First scroll pass to trigger lazy loading
+        console.log('First scroll pass to trigger lazy loading...');
+        await balancedScroll(page);
         
-        // Get page height using a simpler approach
+        // Second wait to ensure all content loads
+        console.log(`Second wait: ${opts.waitTime/2}ms for content to finish loading...`);
+        await new Promise(resolve => setTimeout(resolve, opts.waitTime/2));
+        
+        // Get page height using a balanced approach
         const dimensions = await page.evaluate(() => {
-            // Scroll to bottom to ensure all content is loaded
+            // Force all images and other resources to load
             window.scrollTo(0, document.body.scrollHeight);
             
-            // Get document height with a small padding
-            const height = Math.max(
+            // Method 1: Basic document properties
+            const documentHeight = Math.max(
                 document.body.scrollHeight,
-                document.documentElement.scrollHeight
-            ) + 100;
+                document.body.offsetHeight,
+                document.documentElement.clientHeight,
+                document.documentElement.scrollHeight,
+                document.documentElement.offsetHeight
+            );
+            
+            // Method 2: Check for specific containers that might contain the main content
+            // This is more memory-efficient than checking all elements
+            const containers = [
+                document.body,
+                document.documentElement,
+                document.querySelector('main'),
+                document.querySelector('.main'),
+                document.querySelector('#main'),
+                document.querySelector('.content'),
+                document.querySelector('#content'),
+                document.querySelector('.container'),
+                document.querySelector('#container'),
+                document.querySelector('footer'),
+                document.querySelector('.footer'),
+                document.querySelector('#footer')
+            ].filter(el => el !== null);
+            
+            let containerMaxHeight = 0;
+            for (const container of containers) {
+                const rect = container.getBoundingClientRect();
+                const height = rect.bottom + window.scrollY;
+                if (height > containerMaxHeight) {
+                    containerMaxHeight = height;
+                }
+            }
+            
+            // Method 3: Check a sample of elements (not all elements to save memory)
+            // Get all elements with specific tags that are likely to be at the bottom
+            const bottomElements = [
+                ...document.querySelectorAll('footer, .footer, #footer, .bottom, #bottom'),
+                ...document.querySelectorAll('section:last-child, div:last-child')
+            ];
+            
+            let elementsMaxHeight = 0;
+            for (const el of bottomElements) {
+                const rect = el.getBoundingClientRect();
+                const bottom = rect.bottom + window.scrollY;
+                if (bottom > elementsMaxHeight) {
+                    elementsMaxHeight = bottom;
+                }
+            }
+            
+            // Take the maximum of all methods and add padding
+            const finalHeight = Math.max(documentHeight, containerMaxHeight, elementsMaxHeight) + 200;
+            
+            console.log(`Height detection: Document=${documentHeight}, Containers=${containerMaxHeight}, Elements=${elementsMaxHeight}, Final=${finalHeight}`);
             
             return {
                 width: 1920,
-                height: height
+                height: finalHeight
             };
         });
         
@@ -142,6 +191,7 @@ async function captureScreenshot(id, outputPath, options = {}) {
             path: outputPath,
             fullPage: true,
             type: 'png',
+            captureBeyondViewport: true
         });
         
         console.log('Screenshot captured successfully');
@@ -157,8 +207,8 @@ async function captureScreenshot(id, outputPath, options = {}) {
     }
 }
 
-// Memory-efficient scrolling function
-async function efficientScroll(page) {
+// Balanced scrolling function - more thorough than efficient but less memory-intensive than the original
+async function balancedScroll(page) {
     await page.evaluate(async () => {
         await new Promise((resolve) => {
             // Get initial height
@@ -167,23 +217,46 @@ async function efficientScroll(page) {
                 document.documentElement.scrollHeight
             );
             
-            // Scroll in larger chunks to reduce operations
-            const distance = 500;
+            // Scroll in moderate chunks
+            const distance = 300;
+            let totalHeight = 0;
             let lastScrollTop = 0;
+            let stuckCount = 0;
             
             const timer = setInterval(() => {
                 window.scrollBy(0, distance);
+                totalHeight += distance;
+                
                 const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
                 
-                // If we can't scroll further or we've scrolled past the initial height
-                if (scrollTop === lastScrollTop || scrollTop > initialHeight + 1000) {
+                // If we're stuck at the same position
+                if (scrollTop === lastScrollTop) {
+                    stuckCount++;
+                    // If we're stuck for 3 iterations, try scrolling to the bottom directly
+                    if (stuckCount >= 3) {
+                        window.scrollTo(0, 999999);
+                        // Wait a bit and then try continuing
+                        setTimeout(() => {
+                            stuckCount = 0;
+                        }, 500);
+                    }
+                } else {
+                    stuckCount = 0;
+                }
+                
+                // If we've scrolled well past the initial height or we're stuck for too long
+                if (totalHeight >= initialHeight + 2000 || stuckCount >= 5) {
                     clearInterval(timer);
-                    window.scrollTo(0, 0); // Scroll back to top
-                    resolve();
+                    
+                    // Scroll back to top
+                    window.scrollTo(0, 0);
+                    
+                    // Wait a bit and then resolve
+                    setTimeout(resolve, 500);
                 }
                 
                 lastScrollTop = scrollTop;
-            }, 200); // Slower interval to reduce CPU usage
+            }, 150); // Moderate interval
         });
     });
 }
