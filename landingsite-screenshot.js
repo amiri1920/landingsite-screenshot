@@ -16,13 +16,13 @@ puppeteerExtra.use(StealthPlugin());
  */
 async function captureScreenshot(id, outputPath, options = {}) {
     const url = `https://app.landingsite.ai/website-preview?id=${id}`;
-    console.log(`Processing: ${url}`);
+    console.log(`Processing: ${id} at URL: ${url}`);
     
     // Default options
     const opts = {
         timeout: options.timeout || 300000, // 5 minutes default timeout
         headless: options.headless !== undefined ? options.headless : 'new',
-        waitTime: options.waitTime || 15000, // 15 seconds default wait time
+        waitTime: options.waitTime || 30000, // 30 seconds default wait time (increased)
     };
     
     let browser;
@@ -36,20 +36,14 @@ async function captureScreenshot(id, outputPath, options = {}) {
                 '--disable-dev-shm-usage',
                 '--disable-accelerated-2d-canvas',
                 '--disable-gpu',
-                '--window-size=1920,1080',
-                // Additional args to help with full page screenshots
+                '--window-size=1920,5000', // Start with a very tall window
                 '--hide-scrollbars',
                 '--disable-web-security',
-                '--font-render-hinting=none',
-                '--force-device-scale-factor=1',
             ],
             defaultViewport: {
                 width: 1920,
-                height: 1080,
+                height: 5000, // Start with a very tall viewport
                 deviceScaleFactor: 1,
-                isLandscape: true,
-                hasTouch: false,
-                isMobile: false
             },
             ignoreHTTPSErrors: true,
             timeout: opts.timeout,
@@ -94,36 +88,53 @@ async function captureScreenshot(id, outputPath, options = {}) {
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
         
         // Navigate to the URL
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: opts.timeout });
+        console.log(`Navigating to: ${url}`);
+        await page.goto(url, { 
+            waitUntil: ['networkidle2', 'domcontentloaded', 'load'],
+            timeout: opts.timeout 
+        });
         
         // Wait for the preview to load using a universal approach with setTimeout
         console.log(`Waiting ${opts.waitTime}ms for preview to fully render...`);
         await new Promise(resolve => setTimeout(resolve, opts.waitTime));
         
-        // Get the height of the page content
+        // Ensure all content is loaded by scrolling through the page
+        console.log('Scrolling through page to ensure all content is loaded...');
+        await autoScroll(page);
+        
+        // Wait a bit more after scrolling
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        // Using a different approach to detect page height
         const dimensions = await page.evaluate(() => {
-            // Get the full height of the page including all content
-            const body = document.body;
-            const html = document.documentElement;
+            // Force all images and other resources to load
+            window.scrollTo(0, document.body.scrollHeight);
             
-            const height = Math.max(
-                body.scrollHeight, body.offsetHeight,
-                html.clientHeight, html.scrollHeight, html.offsetHeight
-            );
+            // Get all elements on the page
+            const allElements = document.querySelectorAll('*');
+            let maxHeight = 0;
+            
+            // Find the element with the greatest bottom position
+            for (const el of allElements) {
+                const rect = el.getBoundingClientRect();
+                const bottom = rect.bottom + window.scrollY;
+                if (bottom > maxHeight) {
+                    maxHeight = bottom;
+                }
+            }
             
             return {
                 width: 1920,
-                height: height
+                height: Math.max(maxHeight, document.body.scrollHeight, document.documentElement.scrollHeight) + 200 // Add padding
             };
         });
         
         console.log(`Detected page dimensions: ${dimensions.width}x${dimensions.height}`);
         
-        // Resize viewport to match content height with some extra padding
+        // Resize viewport to match content height
         await page.setViewport({
             width: dimensions.width,
-            height: dimensions.height + 100, // Add padding to ensure we capture everything
-            deviceScaleFactor: 1
+            height: dimensions.height
         });
         
         // Take the screenshot
@@ -132,8 +143,7 @@ async function captureScreenshot(id, outputPath, options = {}) {
             path: outputPath,
             fullPage: true,
             type: 'png',
-            omitBackground: false,
-            captureBeyondViewport: true // Important for full page capture
+            captureBeyondViewport: true
         });
         
         console.log('Screenshot captured successfully');
@@ -147,6 +157,27 @@ async function captureScreenshot(id, outputPath, options = {}) {
             await browser.close();
         }
     }
+}
+
+// Helper function to scroll through the page
+async function autoScroll(page) {
+    await page.evaluate(async () => {
+        await new Promise((resolve) => {
+            let totalHeight = 0;
+            const distance = 100;
+            const timer = setInterval(() => {
+                const scrollHeight = document.body.scrollHeight;
+                window.scrollBy(0, distance);
+                totalHeight += distance;
+                
+                if (totalHeight >= scrollHeight) {
+                    clearInterval(timer);
+                    window.scrollTo(0, 0); // Scroll back to top
+                    resolve();
+                }
+            }, 100);
+        });
+    });
 }
 
 module.exports = { captureScreenshot };
