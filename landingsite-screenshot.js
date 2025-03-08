@@ -18,7 +18,7 @@ async function captureScreenshot(id, outputPath, options = {}) {
         timeout: options.timeout || 60000, // 60 seconds default timeout
         headless: options.headless !== undefined ? options.headless : 'new',
         waitTime: options.waitTime || 15000, // 15 seconds default wait time
-        templateHeight: options.templateHeight || 9125, // 10% more than 8295 to ensure we capture everything
+        templateHeight: options.templateHeight || 9500, // Increased to capture full footer
     };
     
     let browser;
