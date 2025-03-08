@@ -1,137 +1,64 @@
-# Landingsite Screenshot Tool
+# Landingsite Screenshot Service
 
-An automated screenshot tool specifically optimized for capturing full-page screenshots of landingsite.ai website previews.
+A Node.js application that captures full-page screenshots of landingsite.ai website previews using Puppeteer and Chrome. The service is deployed on Render.com and provides a REST API for screenshot requests, including an n8n integration endpoint.
 
-## Features
+## Key Features
 
-- **Specialized for landingsite.ai**: Optimized specifically for capturing landingsite.ai website previews
-- **Reliable Capture**: Uses proven techniques to capture full-page screenshots
-- **Batch Processing**: Process multiple website preview IDs in parallel
-- **Automatic Retries**: Automatically retry failed screenshots
-- **CLI Interface**: Easy-to-use command-line interface
-- **API Server**: RESTful API for integration with other systems
-- **Detailed Reporting**: Generate detailed reports of processing results
+- Captures full-page screenshots of landingsite.ai website previews
+- Optimized for specific template heights (8295px and 6565px)
+- Memory-efficient implementation for cloud environments
+- REST API for screenshot requests
+- Specialized n8n integration endpoint
+- Batch processing capabilities
 
-## Installation
+## Memory Optimization
 
-1. Clone this repository
-2. Install dependencies:
-   ```
-   npm install
-   ```
+This service is optimized to run within memory constraints by:
 
-## Usage
+1. Using memory-efficient browser settings
+2. Limiting JavaScript heap size to 512MB
+3. Implementing proper resource cleanup
+4. Using a single browser process
+5. Optimizing viewport dimensions
+6. Disabling unnecessary features
 
-### Command Line Interface (CLI)
+## API Endpoints
 
-#### Capture a single screenshot:
+- `GET /` - Health check endpoint
+- `POST /api/screenshot` - Capture a single screenshot
+- `POST /api/n8n/screenshot` - Capture a screenshot (optimized for n8n)
+- `POST /api/batch` - Process multiple IDs in batch
+- `GET /api/batch/:batchId/status` - Check batch status
 
-```bash
-npm run capture 884975a2-5820-48d4-b415-0f038208bcbe -- --output ./my-screenshot.png
-```
+## Using with n8n
 
-Or directly:
-
-```bash
-node cli.js capture 884975a2-5820-48d4-b415-0f038208bcbe --output ./my-screenshot.png
-```
-
-#### Process multiple IDs from a file:
-
-Create a text file with one ID per line:
-
-```
-884975a2-5820-48d4-b415-0f038208bcbe
-1234567890abcdef
-```
-
-Then run:
-
-```bash
-npm run batch -- ids.txt --output-dir ./batch-output --concurrency 2
-```
-
-Or directly:
-
-```bash
-node cli.js batch ids.txt --output-dir ./batch-output --concurrency 2
-```
-
-### API Server
-
-Start the API server:
-
-```bash
-npm start
-```
-
-#### Capture a single screenshot:
-
-```bash
-curl -X POST http://localhost:3000/api/screenshot \
-  -H "Content-Type: application/json" \
-  -d '{"id":"884975a2-5820-48d4-b415-0f038208bcbe"}'
-```
-
-#### Process multiple IDs:
-
-```bash
-curl -X POST http://localhost:3000/api/batch \
-  -H "Content-Type: application/json" \
-  -d '{"ids":["884975a2-5820-48d4-b415-0f038208bcbe","1234567890abcdef"]}'
-```
-
-#### Check batch status:
-
-```bash
-curl http://localhost:3000/api/batch/1234567890/status
-```
-
-## Options
-
-### CLI Options
-
-#### For `capture` command:
-
-- `--output, -o <path>`: Output file path (default: ./screenshot.png)
-- `--headless <true|false|new>`: Run in headless mode (default: new)
-- `--timeout <ms>`: Timeout in milliseconds (default: 300000)
-
-#### For `batch` command:
-
-- `--output-dir, -o <path>`: Output directory (default: ./screenshots)
-- `--concurrency, -c <number>`: Number of concurrent screenshots (default: 1)
-- `--retries, -r <number>`: Number of retry attempts (default: 3)
-- `--headless <true|false|new>`: Run in headless mode (default: new)
-- `--timeout <ms>`: Timeout in milliseconds (default: 300000)
-
-### API Options
-
-#### For `/api/screenshot` endpoint:
+The service can be integrated with n8n using the HTTP Request node:
 
 ```json
 {
-  "id": "884975a2-5820-48d4-b415-0f038208bcbe",
-  "headless": "new",
-  "timeout": 300000
+  "endpoint": "https://landingsite-screenshot.onrender.com/api/n8n/screenshot",
+  "method": "POST",
+  "body": {
+    "id": "your-website-id",
+    "templateHeight": 8295
+  }
 }
 ```
 
-#### For `/api/batch` endpoint:
+## Deployment on Render.com
 
-```json
-{
-  "ids": ["884975a2-5820-48d4-b415-0f038208bcbe", "1234567890abcdef"],
-  "concurrency": 2,
-  "retries": 3
-}
-```
+The service is configured to deploy on Render.com with:
 
-## Requirements
+- Docker container environment
+- 512MB memory limit
+- 10GB persistent disk for storing screenshots
 
-- Node.js 14+
-- Google Chrome installed on the system
+## Troubleshooting
 
-## License
+If you encounter a 502 Bad Gateway error, it may be due to:
 
-ISC
+1. Memory limits being exceeded - the service is optimized to work within memory constraints, but large websites may still cause issues
+2. Timeout issues - the default timeout is 5 minutes, which should be sufficient for most websites
+3. Connection issues - check if landingsite.ai is accessible
+
+For persistent issues, check the logs on Render.com for more details.
