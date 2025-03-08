@@ -26,6 +26,7 @@ RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key
 # Set Chrome path environment variable
 ENV CHROME_PATH=/usr/bin/google-chrome-stable
 ENV RENDER=true
+ENV NODE_OPTIONS="--max-old-space-size=512"
 
 # Create app directory
 WORKDIR /app
@@ -39,8 +40,15 @@ RUN npm install
 # Copy app source
 COPY . .
 
+# Create screenshots directory
+RUN mkdir -p /app/screenshots && chmod 755 /app/screenshots
+
 # Expose port
 EXPOSE 3000
 
-# Start the app
-CMD ["npm", "start"]
+# Add a healthcheck
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1
+
+# Start the app with memory limits
+CMD ["node", "--max-old-space-size=512", "api-server.js"]
