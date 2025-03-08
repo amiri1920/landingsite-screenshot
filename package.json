@@ -7,11 +7,11 @@
     "landingsite-screenshot": "./cli.js"
   },
   "scripts": {
-    "start": "node api-server.js",
-    "api": "node api-server.js",
-    "cli": "node cli.js",
-    "capture": "node cli.js capture",
-    "batch": "node cli.js batch",
+    "start": "node --max-old-space-size=512 api-server.js",
+    "api": "node --max-old-space-size=512 api-server.js",
+    "cli": "node --max-old-space-size=512 cli.js",
+    "capture": "node --max-old-space-size=512 cli.js capture",
+    "batch": "node --max-old-space-size=512 cli.js batch",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": ["screenshot", "puppeteer", "web", "automation", "landingsite"],
@@ -23,6 +23,7 @@
     "puppeteer-core": "^24.3.1",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
-    "sharp": "^0.33.5"
+    "sharp": "^0.33.5",
+    "compression": "^1.7.4"
   }
 }
