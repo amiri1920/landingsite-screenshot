@@ -37,8 +37,20 @@ async function captureScreenshot(id, outputPath, options = {}) {
                 '--disable-accelerated-2d-canvas',
                 '--disable-gpu',
                 '--window-size=1920,1080',
+                // Additional args to help with full page screenshots
+                '--hide-scrollbars',
+                '--disable-web-security',
+                '--font-render-hinting=none',
+                '--force-device-scale-factor=1',
             ],
-            defaultViewport: null,
+            defaultViewport: {
+                width: 1920,
+                height: 1080,
+                deviceScaleFactor: 1,
+                isLandscape: true,
+                hasTouch: false,
+                isMobile: false
+            },
             ignoreHTTPSErrors: true,
             timeout: opts.timeout,
         };
@@ -78,8 +90,8 @@ async function captureScreenshot(id, outputPath, options = {}) {
         // Open a new page
         const page = await browser.newPage();
         
-        // Set viewport size
-        await page.setViewport({ width: 1920, height: 1080 });
+        // Set user agent to a desktop browser
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
         
         // Navigate to the URL
         await page.goto(url, { waitUntil: 'networkidle2', timeout: opts.timeout });
@@ -89,12 +101,30 @@ async function captureScreenshot(id, outputPath, options = {}) {
         await new Promise(resolve => setTimeout(resolve, opts.waitTime));
         
         // Get the height of the page content
-        const bodyHeight = await page.evaluate(() => {
-            return document.body.scrollHeight;
+        const dimensions = await page.evaluate(() => {
+            // Get the full height of the page including all content
+            const body = document.body;
+            const html = document.documentElement;
+            
+            const height = Math.max(
+                body.scrollHeight, body.offsetHeight,
+                html.clientHeight, html.scrollHeight, html.offsetHeight
+            );
+            
+            return {
+                width: 1920,
+                height: height
+            };
         });
         
-        // Resize viewport to match content height
-        await page.setViewport({ width: 1920, height: bodyHeight });
+        console.log(`Detected page dimensions: ${dimensions.width}x${dimensions.height}`);
+        
+        // Resize viewport to match content height with some extra padding
+        await page.setViewport({
+            width: dimensions.width,
+            height: dimensions.height + 100, // Add padding to ensure we capture everything
+            deviceScaleFactor: 1
+        });
         
         // Take the screenshot
         console.log(`Taking screenshot and saving to: ${outputPath}`);
@@ -102,6 +132,8 @@ async function captureScreenshot(id, outputPath, options = {}) {
             path: outputPath,
             fullPage: true,
             type: 'png',
+            omitBackground: false,
+            captureBeyondViewport: true // Important for full page capture
         });
         
         console.log('Screenshot captured successfully');
