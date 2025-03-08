@@ -22,6 +22,17 @@ This service is optimized to run within memory constraints by:
 5. Optimizing viewport dimensions
 6. Disabling unnecessary features
 
+## Rendering Consistency
+
+To ensure consistent rendering with desktop browsers, the service:
+
+1. Forces desktop layout with custom CSS
+2. Overrides viewport meta tags
+3. Uses a macOS Chrome user agent
+4. Implements thorough scrolling to ensure all content loads
+5. Disables responsive behaviors that might cause layout differences
+6. Sets explicit zoom level to prevent scaling issues
+
 ## API Endpoints
 
 - `GET /` - Health check endpoint
@@ -62,3 +73,11 @@ If you encounter a 502 Bad Gateway error, it may be due to:
 3. Connection issues - check if landingsite.ai is accessible
 
 For persistent issues, check the logs on Render.com for more details.
+
+## Recent Improvements
+
+- **Memory Optimization**: Reduced memory usage to work within Render.com free tier constraints
+- **Rendering Consistency**: Improved rendering to match desktop browser output
+- **Scrolling Logic**: Enhanced scrolling to ensure all content is loaded
+- **Error Handling**: Added better error handling and graceful shutdown
+- **Monitoring**: Added memory usage logging for debugging
