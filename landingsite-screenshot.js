@@ -20,14 +20,14 @@ async function captureScreenshot(id, outputPath, options = {}) {
     
     // Default options
     const opts = {
-        timeout: options.timeout || 300000, // 5 minutes default timeout
+        timeout: options.timeout || 180000, // 3 minutes default timeout (reduced)
         headless: options.headless !== undefined ? options.headless : 'new',
-        waitTime: options.waitTime || 45000, // 45 seconds default wait time
+        waitTime: options.waitTime || 20000, // 20 seconds default wait time (reduced)
     };
     
     let browser;
     try {
-        // Use the exact configuration that worked in our successful test
+        // Memory-optimized configuration
         const launchOptions = {
             headless: opts.headless,
             args: [
@@ -36,15 +36,19 @@ async function captureScreenshot(id, outputPath, options = {}) {
                 '--disable-dev-shm-usage',
                 '--disable-accelerated-2d-canvas',
                 '--disable-gpu',
-                '--window-size=1920,8000', // Reduced from 10000 to 8000
+                '--window-size=1920,3000', // Reduced from 8000 to 3000
                 '--hide-scrollbars',
-                '--disable-web-security',
-                '--disable-features=site-per-process',
-                '--enable-features=NetworkService',
+                // Memory optimization flags
+                '--single-process',
+                '--disable-extensions',
+                '--disable-component-extensions-with-background-pages',
+                '--disable-default-apps',
+                '--mute-audio',
+                '--js-flags=--max-old-space-size=512', // Limit JS memory
             ],
             defaultViewport: {
                 width: 1920,
-                height: 8000, // Reduced from 10000 to 8000
+                height: 3000, // Reduced from 8000 to 3000
                 deviceScaleFactor: 1,
             },
             ignoreHTTPSErrors: true,
@@ -89,146 +93,38 @@ async function captureScreenshot(id, outputPath, options = {}) {
         // Set user agent to a desktop browser
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
         
-        // Set extra headers to ensure proper loading
-        await page.setExtraHTTPHeaders({
-            'Accept-Language': 'en-US,en;q=0.9',
-        });
-        
-        // Enable JavaScript and CSS
-        await page.setJavaScriptEnabled(true);
+        // Memory optimization: Disable cache
+        await page.setCacheEnabled(false);
         
         // Navigate to the URL
         console.log(`Navigating to: ${url}`);
         await page.goto(url, { 
-            waitUntil: ['networkidle2', 'domcontentloaded', 'load'],
+            waitUntil: 'networkidle2',
             timeout: opts.timeout 
         });
         
-        // Wait for the preview to load using a universal approach with setTimeout
-        console.log(`Initial wait: ${opts.waitTime/3}ms for page to start rendering...`);
-        await new Promise(resolve => setTimeout(resolve, opts.waitTime/3));
+        // Wait for the preview to load
+        console.log(`Waiting ${opts.waitTime}ms for page to render...`);
+        await new Promise(resolve => setTimeout(resolve, opts.waitTime));
         
-        // Ensure all content is loaded by scrolling through the page multiple times
-        console.log('First scroll pass to trigger lazy loading...');
-        await autoScroll(page);
+        // Memory-efficient scrolling
+        console.log('Scrolling to ensure all content is loaded...');
+        await efficientScroll(page);
         
-        // Wait a bit after first scrolling
-        console.log(`Waiting ${opts.waitTime/3}ms after first scroll...`);
-        await new Promise(resolve => setTimeout(resolve, opts.waitTime/3));
-        
-        // Second scroll pass to ensure everything is loaded
-        console.log('Second scroll pass to ensure all content is loaded...');
-        await autoScroll(page);
-        
-        // Final wait to ensure all animations and delayed content are loaded
-        console.log(`Final wait: ${opts.waitTime/3}ms to ensure complete rendering...`);
-        await new Promise(resolve => setTimeout(resolve, opts.waitTime/3));
-        
-        // Using multiple techniques to detect page height with precision
+        // Get page height using a simpler approach
         const dimensions = await page.evaluate(() => {
-            // Force all images and other resources to load
-            window.scrollTo(0, 999999);
+            // Scroll to bottom to ensure all content is loaded
+            window.scrollTo(0, document.body.scrollHeight);
             
-            // Method 1: Get all elements on the page and find the lowest visible element
-            const allElements = document.querySelectorAll('*');
-            let maxHeight = 0;
-            let lowestVisibleElement = null;
-            
-            for (const el of allElements) {
-                // Skip elements with zero height or invisible elements
-                if (el.offsetHeight === 0 || 
-                    window.getComputedStyle(el).display === 'none' || 
-                    window.getComputedStyle(el).visibility === 'hidden') {
-                    continue;
-                }
-                
-                const rect = el.getBoundingClientRect();
-                const bottom = rect.bottom + window.scrollY;
-                
-                // Only consider elements that have actual content or background
-                const hasBackground = window.getComputedStyle(el).backgroundColor !== 'rgba(0, 0, 0, 0)' && 
-                                     window.getComputedStyle(el).backgroundColor !== 'transparent';
-                const hasContent = el.textContent.trim().length > 0;
-                const hasBorder = window.getComputedStyle(el).borderBottomWidth !== '0px';
-                const hasImage = el.tagName === 'IMG' || 
-                                window.getComputedStyle(el).backgroundImage !== 'none';
-                
-                if ((hasBackground || hasContent || hasBorder || hasImage) && bottom > maxHeight) {
-                    maxHeight = bottom;
-                    lowestVisibleElement = el;
-                }
-            }
-            
-            // Method 2: Check for specific containers that might contain the main content
-            const containers = [
-                document.body,
-                document.documentElement,
-                document.querySelector('main'),
-                document.querySelector('.main'),
-                document.querySelector('#main'),
-                document.querySelector('.content'),
-                document.querySelector('#content'),
-                document.querySelector('.container'),
-                document.querySelector('#container'),
-                document.querySelector('footer'),
-                document.querySelector('.footer'),
-                document.querySelector('#footer')
-            ].filter(el => el !== null);
-            
-            let containerMaxHeight = 0;
-            let tallestContainer = null;
-            
-            for (const container of containers) {
-                // Get the actual rendered height, not just scrollHeight
-                const rect = container.getBoundingClientRect();
-                const height = rect.bottom + window.scrollY;
-                
-                if (height > containerMaxHeight) {
-                    containerMaxHeight = height;
-                    tallestContainer = container;
-                }
-            }
-            
-            // Method 3: Use document properties
-            const documentHeight = Math.max(
+            // Get document height with a small padding
+            const height = Math.max(
                 document.body.scrollHeight,
-                document.body.offsetHeight,
-                document.documentElement.clientHeight,
-                document.documentElement.scrollHeight,
-                document.documentElement.offsetHeight
-            );
-            
-            // Find the most precise height by comparing methods
-            // If element detection found a good candidate, prioritize it
-            let finalHeight;
-            let method = '';
-            
-            if (lowestVisibleElement && maxHeight > 0 && maxHeight + 200 >= documentHeight) {
-                // If the lowest element is close to document height, use it with small padding
-                finalHeight = maxHeight + 100;
-                method = 'Element';
-            } else if (tallestContainer && containerMaxHeight > 0 && containerMaxHeight + 200 >= documentHeight) {
-                // If container height is close to document height, use it with small padding
-                finalHeight = containerMaxHeight + 100;
-                method = 'Container';
-            } else {
-                // Fall back to document height with moderate padding
-                finalHeight = documentHeight + 150;
-                method = 'Document';
-            }
-            
-            // Log detailed information for debugging
-            console.log(`Height detection details:
-                Element method: ${maxHeight}px (${lowestVisibleElement ? lowestVisibleElement.tagName : 'none'})
-                Container method: ${containerMaxHeight}px (${tallestContainer ? tallestContainer.tagName : 'none'})
-                Document method: ${documentHeight}px
-                Selected method: ${method}
-                Final height: ${finalHeight}px
-            `);
+                document.documentElement.scrollHeight
+            ) + 100;
             
             return {
                 width: 1920,
-                height: finalHeight
+                height: height
             };
         });
         
@@ -246,7 +142,6 @@ async function captureScreenshot(id, outputPath, options = {}) {
             path: outputPath,
             fullPage: true,
             type: 'png',
-            captureBeyondViewport: true
         });
         
         console.log('Screenshot captured successfully');
@@ -262,33 +157,33 @@ async function captureScreenshot(id, outputPath, options = {}) {
     }
 }
 
-// Helper function to scroll through the page
-async function autoScroll(page) {
+// Memory-efficient scrolling function
+async function efficientScroll(page) {
     await page.evaluate(async () => {
         await new Promise((resolve) => {
-            let totalHeight = 0;
-            const distance = 200;
+            // Get initial height
+            const initialHeight = Math.max(
+                document.body.scrollHeight,
+                document.documentElement.scrollHeight
+            );
+            
+            // Scroll in larger chunks to reduce operations
+            const distance = 500;
+            let lastScrollTop = 0;
+            
             const timer = setInterval(() => {
-                const scrollHeight = Math.max(
-                    document.body.scrollHeight,
-                    document.documentElement.scrollHeight
-                );
-                
                 window.scrollBy(0, distance);
-                totalHeight += distance;
+                const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
                 
-                // Add some randomness to the scrolling to trigger different lazy loading thresholds
-                if (totalHeight % 1000 < 10) {
-                    window.scrollBy(0, -100);
-                    setTimeout(() => window.scrollBy(0, 100), 100);
-                }
-                
-                if (totalHeight >= scrollHeight + 1000) {
+                // If we can't scroll further or we've scrolled past the initial height
+                if (scrollTop === lastScrollTop || scrollTop > initialHeight + 1000) {
                     clearInterval(timer);
                     window.scrollTo(0, 0); // Scroll back to top
                     resolve();
                 }
-            }, 100);
+                
+                lastScrollTop = scrollTop;
+            }, 200); // Slower interval to reduce CPU usage
         });
     });
 }
