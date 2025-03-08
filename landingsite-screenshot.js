@@ -86,7 +86,13 @@ async function captureScreenshot(id, outputPath, options = {}) {
         
         // Wait for the preview to load
         console.log(`Waiting ${opts.waitTime}ms for preview to fully render...`);
-        await page.waitForTimeout(opts.waitTime);
+        // Fix for compatibility with different Puppeteer versions
+        if (typeof page.waitForTimeout === 'function') {
+            await page.waitForTimeout(opts.waitTime);
+        } else {
+            // Fallback for older Puppeteer versions
+            await page.waitFor(opts.waitTime);
+        }
         
         // Get the height of the page content
         const bodyHeight = await page.evaluate(() => {
