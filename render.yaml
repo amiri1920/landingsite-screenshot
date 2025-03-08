@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: landingsite-screenshot
+    env: docker
+    plan: standard
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+    disk:
+      name: screenshots
+      mountPath: /app/screenshots
+      sizeGB: 10
